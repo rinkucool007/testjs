@@ -1,9 +1,13 @@
 const fs = require('fs');
 const csv = require('csv-parser');
 const { exec } = require('child_process');
+const path = require('path');
 
-// Path to the CSV file
-const CSV_FILE_PATH = '../data/user.csv';
+// Construct the correct path to the CSV file
+const CSV_FILE_PATH = path.join(__dirname, '../data/user.csv');
+
+// Specify the target org alias or username
+const TARGET_ORG = 'your-org-alias'; // Replace with your org alias or username
 
 // Function to execute SFDX CLI commands
 function executeSfdxCliCommand(command) {
@@ -34,6 +38,7 @@ async function createUser(userData) {
     // Construct the SFDX CLI command
     const sfdxCommand = `
         sfdx force:user:create 
+        --target-org ${TARGET_ORG}
         username=${Username} 
         email=${Email} 
         firstName=${FirstName} 
@@ -51,6 +56,9 @@ async function createUser(userData) {
     }
 }
 
+// Debugging: Log the resolved file path
+console.log(`Attempting to read file from: ${CSV_FILE_PATH}`);
+
 // Read and process the CSV file
 fs.createReadStream(CSV_FILE_PATH)
     .pipe(csv())
@@ -59,4 +67,7 @@ fs.createReadStream(CSV_FILE_PATH)
     })
     .on('end', () => {
         console.log('CSV file processing completed.');
+    })
+    .on('error', (err) => {
+        console.error(`Error reading CSV file: ${err.message}`);
     });
