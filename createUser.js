@@ -35,16 +35,16 @@ async function createUser(userData) {
         Profile
     } = userData;
 
-    // Construct the SFDX CLI command
+    // Construct the SFDX CLI command with proper quoting
     const sfdxCommand = `
         sfdx force:user:create 
-        --target-org ${TARGET_ORG}
-        username=${Username} 
-        email=${Email} 
-        firstName=${FirstName} 
-        lastName=${LastName} 
-        roleName=${Role} 
-        profileName=${Profile}
+        --target-org "${TARGET_ORG}"
+        username="${Username}" 
+        email="${Email}" 
+        firstName="${FirstName}" 
+        lastName="${LastName}" 
+        roleName="${Role}" 
+        profileName="${Profile}"
     `.replace(/\n/g, ' ').trim();
 
     try {
