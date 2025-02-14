@@ -1,62 +1,66 @@
 require('dotenv').config();
 const fs = require('fs');
 const csv = require('csv-parser');
-const axios = require('axios');
+const jsforce = require('jsforce');
 const path = require('path');
 
 // Load environment variables
 const {
-    SALESFORCE_CLIENT_ID,
-    SALESFORCE_CLIENT_SECRET,
     SALESFORCE_USERNAME,
     SALESFORCE_PASSWORD,
     SALESFORCE_SECURITY_TOKEN,
     SALESFORCE_LOGIN_URL
 } = process.env;
 
-let accessToken = null;
-let instanceUrl = null;
+// Initialize the connection
+const conn = new jsforce.Connection({
+    loginUrl: SALESFORCE_LOGIN_URL // Use 'https://login.salesforce.com' for production
+});
 
-// Authenticate to Salesforce
-async function authenticate() {
-    const authResponse = await axios.post(`${SALESFORCE_LOGIN_URL}/services/oauth2/token`, null, {
-        params: {
-            grant_type: 'password',
-            client_id: SALESFORCE_CLIENT_ID,
-            client_secret: SALESFORCE_CLIENT_SECRET,
-            username: SALESFORCE_USERNAME,
-            password: `${SALESFORCE_PASSWORD}${SALESFORCE_SECURITY_TOKEN}`
-        }
-    });
+// Authenticate and log in
+conn.login(SALESFORCE_USERNAME, `${SALESFORCE_PASSWORD}${SALESFORCE_SECURITY_TOKEN}`, async (err, userInfo) => {
+    if (err) {
+        console.error('Login failed:', err.message);
+        return;
+    }
 
-    accessToken = authResponse.data.access_token;
-    instanceUrl = authResponse.data.instance_url;
+    console.log('Login successful!');
+    console.log('User ID:', userInfo.id);
+    console.log('Organization ID:', userInfo.organizationId);
 
-    console.log('Authentication successful.');
+    // Process CSV file and create users
+    const CSV_FILE_PATH = path.join(__dirname, '../data/user.csv');
+    console.log(`Processing file: ${CSV_FILE_PATH}`);
+
+    fs.createReadStream(CSV_FILE_PATH)
+        .pipe(csv())
+        .on('data', async (row) => {
+            await createUser(conn, row); // Create a user for each row in the CSV
+        })
+        .on('end', () => {
+            console.log('CSV file processing completed.');
+        })
+        .on('error', (err) => {
+            console.error(`Error reading CSV file: ${err.message}`);
+        });
+});
+
+// Function to get Profile ID by Name
+async function getProfileId(conn, profileName) {
+    const query = `SELECT Id FROM Profile WHERE Name = '${profileName}'`;
+    const result = await conn.query(query);
+    return result.records[0]?.Id;
 }
 
-// Get Profile ID by Name
-async function getProfileId(profileName) {
-    const response = await axios.get(`${instanceUrl}/services/data/v57.0/query/`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        params: { q: `SELECT Id FROM Profile WHERE Name = '${profileName}'` }
-    });
-
-    return response.data.records[0]?.Id;
+// Function to get Role ID by Name (Optional)
+async function getRoleId(conn, roleName) {
+    const query = `SELECT Id FROM UserRole WHERE Name = '${roleName}'`;
+    const result = await conn.query(query);
+    return result.records[0]?.Id;
 }
 
-// Get Role ID by Name (Optional)
-async function getRoleId(roleName) {
-    const response = await axios.get(`${instanceUrl}/services/data/v57.0/query/`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        params: { q: `SELECT Id FROM UserRole WHERE Name = '${roleName}'` }
-    });
-
-    return response.data.records[0]?.Id;
-}
-
-// Create a User via REST API
-async function createUser(userData) {
+// Function to create a user
+async function createUser(conn, userData) {
     const {
         Username,
         Email,
@@ -66,56 +70,32 @@ async function createUser(userData) {
         Role
     } = userData;
 
-    const profileId = await getProfileId(Profile);
-    const roleId = Role ? await getRoleId(Role) : null;
-
-    const userPayload = {
-        Username,
-        Email,
-        FirstName,
-        LastName,
-        Alias: `${FirstName.substring(0, 2)}${LastName.substring(0, 2)}`, // Must be unique
-        CommunityNickname: `${FirstName}${LastName}`, // Must be unique
-        ProfileId: profileId,
-        UserRoleId: roleId,
-        TimeZoneSidKey: 'America/Los_Angeles',
-        LocaleSidKey: 'en_US',
-        EmailEncodingKey: 'UTF-8',
-        LanguageLocaleKey: 'en_US'
-    };
-
     try {
-        const response = await axios.post(`${instanceUrl}/services/data/v57.0/sobjects/User/`, userPayload, {
-            headers: { Authorization: `Bearer ${accessToken}` }
-        });
-        console.log(`User created: ${response.data.id}`);
+        const profileId = await getProfileId(conn, Profile);
+        const roleId = Role ? await getRoleId(conn, Role) : null;
+
+        const userPayload = {
+            Username,
+            Email,
+            FirstName,
+            LastName,
+            Alias: `${FirstName.substring(0, 2)}${LastName.substring(0, 2)}`, // Must be unique
+            CommunityNickname: `${FirstName}${LastName}`, // Must be unique
+            ProfileId: profileId,
+            UserRoleId: roleId,
+            TimeZoneSidKey: 'America/Los_Angeles',
+            LocaleSidKey: 'en_US',
+            EmailEncodingKey: 'UTF-8',
+            LanguageLocaleKey: 'en_US'
+        };
+
+        const result = await conn.sobject('User').create(userPayload);
+        if (result.success) {
+            console.log(`User created successfully: ${result.id}`);
+        } else {
+            console.error(`Failed to create user: ${JSON.stringify(result.errors)}`);
+        }
     } catch (error) {
-        console.error(`Failed to create user ${Username}: ${error.response?.data || error.message}`);
+        console.error(`Error creating user ${Username}: ${error.message}`);
     }
 }
-
-// Main Function
-(async () => {
-    try {
-        // Step 1: Authenticate
-        await authenticate();
-
-        // Step 2: Process CSV File
-        const CSV_FILE_PATH = path.join(__dirname, '../data/user.csv');
-        console.log(`Processing file: ${CSV_FILE_PATH}`);
-
-        fs.createReadStream(CSV_FILE_PATH)
-            .pipe(csv())
-            .on('data', (row) => {
-                createUser(row); // Create a user for each row in the CSV
-            })
-            .on('end', () => {
-                console.log('CSV file processing completed.');
-            })
-            .on('error', (err) => {
-                console.error(`Error reading CSV file: ${err.message}`);
-            });
-    } catch (error) {
-        console.error(`Error: ${error.message}`);
-    }
-})();
